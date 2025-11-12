@@ -539,14 +539,10 @@
         <source src="https://music.163.com/song/media/outer/url?id=2728656700.mp3" type="audio/mpeg">
     </audio>
 
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
         // Supabase配置
-        const supabaseUrl = 'https://cdwkrgnocltdekoyueuc.supabase.co';
-        const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNkd2tyZ25vY2x0ZGVrb3l1ZXVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgwMTU5MTQsImV4cCI6MjA3MzU5MTkxNH0.Kwk6KwQColbQS2fT7iI77uZlJJx3AzEt-u2NR9rx6NE';
-        
-        // 创建Supabase客户端
-        const supabase = window.supabase.createClient(supabaseUrl, supabaseAnonKey);
+        const SUPABASE_URL = 'https://cdwkrgnocltdekoyueuc.supabase.co';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNkd2tyZ25vY2x0ZGVrb3l1ZXVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgwMTU5MTQsImV4cCI6MjA3MzU5MTkxNH0.Kwk6KwQColbQS2fT7iI77uZlJJx3AzEt-u2NR9rx6NE';
 
         // 生成增强下雨特效
         function createRain() {
@@ -645,59 +641,62 @@
             }
         }
         
-        // 卡密验证逻辑
+        // 卡密验证逻辑 - 使用 REST API
         document.getElementById('enter-btn').addEventListener('click', async function() {
             const cardKey = document.getElementById('card-key').value.trim();
             const errorMessage = document.getElementById('error-message');
+            const enterBtn = this;
             
             errorMessage.style.display = 'none';
+            
+            enterBtn.disabled = true;
+            enterBtn.textContent = '验证中...';
 
             try {
-                // 验证卡密有效性
-                const currentTimeISO = new Date().toISOString();
-                const { data: validCards, error: cardError } = await supabase
-                    .from('cards')
-                    .select('*')
-                    .eq('key', cardKey)
-                    .eq('status', 'active')
-                    .gt('expiry_time', currentTimeISO);
+                if (!cardKey) {
+                    throw new Error('请输入卡密');
+                }
 
-                if (cardError) throw cardError;
+                console.log('开始验证卡密:', cardKey);
+
+                // 验证卡密有效性 - 使用 REST API
+                const currentTime = new Date().toISOString();
+                const url = `${SUPABASE_URL}/rest/v1/cards?key=eq.${encodeURIComponent(cardKey)}&status=eq.active&expiry_time=gt.${currentTime}&select=*`;
+                
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const validCards = await response.json();
+                
                 if (!validCards || validCards.length === 0) {
                     errorMessage.textContent = '卡密无效或已过期！';
                     errorMessage.style.display = 'block';
                     return;
                 }
 
+                console.log('卡密验证成功');
+
                 // 生成用户信息
                 const deviceId = generateDeviceId();
                 const userNickname = generateRandomNickname();
                 const userId = crypto.randomUUID();
 
-                // 保存用户到merit表
-                const { error: userError } = await supabase
-                    .from('merit')
-                    .upsert({
-                        user_id: userId,
-                        nickname: userNickname,
-                        count: 0,
-                        device_id: deviceId,
-                        last_login: new Date().toISOString()
-                    }, { onConflict: 'user_id' });
-
-                if (userError) throw userError;
-
-                // 绑定卡密到用户
-                const { error: bindError } = await supabase
-                    .from('cards')
-                    .update({ user_id: userId })
-                    .eq('key', cardKey);
-
-                if (bindError) throw bindError;
-
-                // 保存用户信息到本地
+                // 保存到本地存储
                 localStorage.setItem('currentUserId', userId);
                 localStorage.setItem('currentUserNickname', userNickname);
+                localStorage.setItem('cardKey', cardKey);
+                localStorage.setItem('meritCount', '0');
+                localStorage.setItem('loginTime', new Date().toISOString());
 
                 // 切换到主页面
                 document.getElementById('welcome-page').style.opacity = '0';
@@ -712,108 +711,79 @@
                 console.error('验证失败:', err);
                 errorMessage.textContent = '验证失败：' + err.message;
                 errorMessage.style.display = 'block';
+            } finally {
+                enterBtn.disabled = false;
+                enterBtn.textContent = '进入系统';
             }
         });
         
         // 初始化主页面
-        async function initMainPage() {
+        function initMainPage() {
             const userId = localStorage.getItem('currentUserId');
             const userNickname = localStorage.getItem('currentUserNickname');
+            const meritCount = localStorage.getItem('meritCount') || '0';
             
             document.getElementById('user-nickname').textContent = userNickname;
             document.getElementById('user-avatar').textContent = userNickname.charAt(0);
+            document.getElementById('merit-count').textContent = meritCount;
             
             getDeviceInfo();
             startTimer();
-            loadMeritCount();
         }
         
         // 页面加载时检查
-        window.addEventListener('load', async function() {
+        window.addEventListener('load', function() {
             createRain();
             createLightning();
             updateCurrentTime();
             setInterval(updateCurrentTime, 1000);
 
+            // 如果有本地存储的用户信息，直接进入主页面
             const userId = localStorage.getItem('currentUserId');
             if (userId) {
-                try {
-                    const { data: userCards, error } = await supabase
-                        .from('cards')
-                        .select('expiry_time, status')
-                        .eq('user_id', userId)
-                        .single();
-
-                    if (!error && userCards && userCards.status === 'active' && new Date(userCards.expiry_time) > new Date()) {
-                        document.getElementById('welcome-page').style.display = 'none';
-                        document.getElementById('main-page').style.display = 'block';
-                        initMainPage();
-                        autoPlayMusic();
-                    } else {
-                        localStorage.removeItem('currentUserId');
-                        localStorage.removeItem('currentUserNickname');
-                    }
-                } catch (err) {
-                    console.error('检查用户状态失败:', err);
-                }
+                document.getElementById('welcome-page').style.display = 'none';
+                document.getElementById('main-page').style.display = 'block';
+                initMainPage();
+                autoPlayMusic();
             }
         });
         
         // 倒计时功能
-        async function startTimer() {
-            const userId = localStorage.getItem('currentUserId');
-            if (!userId) return;
+        function startTimer() {
+            const loginTime = localStorage.getItem('loginTime');
+            if (!loginTime) return;
             
-            try {
-                const { data: userCard, error } = await supabase
-                    .from('cards')
-                    .select('expiry_time')
-                    .eq('user_id', userId)
-                    .single();
-
-                if (error || !userCard) {
-                    document.getElementById('time-left').textContent = '卡密无效';
+            const loginTimestamp = new Date(loginTime).getTime();
+            const expiryTime = loginTimestamp + (24 * 60 * 60 * 1000); // 24小时有效期
+            
+            const timeLeftElement = document.getElementById('time-left');
+            
+            function updateTimer() {
+                const currentTime = new Date().getTime();
+                const timeLeft = expiryTime - currentTime;
+                
+                if (timeLeft <= 0) {
+                    timeLeftElement.textContent = '体验已过期';
+                    localStorage.removeItem('currentUserId');
+                    localStorage.removeItem('currentUserNickname');
+                    localStorage.removeItem('meritCount');
+                    
+                    setTimeout(() => {
+                        alert('您的体验时间已结束，请重新输入卡密！');
+                        location.reload();
+                    }, 1000);
                     return;
                 }
-
-                const expiryTime = new Date(userCard.expiry_time).getTime();
-                const timeLeftElement = document.getElementById('time-left');
                 
-                function updateTimer() {
-                    const currentTime = new Date().getTime();
-                    const timeLeft = expiryTime - currentTime;
-                    
-                    if (timeLeft <= 0) {
-                        timeLeftElement.textContent = '卡密已过期';
-                        localStorage.removeItem('currentUserId');
-                        localStorage.removeItem('currentUserNickname');
-                        
-                        setTimeout(() => {
-                            alert('您的卡密已过期，请重新输入卡密！');
-                            location.reload();
-                        }, 1000);
-                        return;
-                    }
-                    
-                    const days = Math.floor(timeLeft / (1000 * 60 * 60 * 24));
-                    const hours = Math.floor((timeLeft % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-                    const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
-                    const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
-                    
-                    if (days > 0) {
-                        timeLeftElement.textContent = `剩余时间: ${days}天 ${hours}小时 ${minutes}分`;
-                    } else if (hours > 0) {
-                        timeLeftElement.textContent = `剩余时间: ${hours}小时 ${minutes}分 ${seconds}秒`;
-                    } else {
-                        timeLeftElement.textContent = `剩余时间: ${minutes}分 ${seconds}秒`;
-                    }
-                }
+                const hours = Math.floor((timeLeft % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
+                const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
                 
-                updateTimer();
-                setInterval(updateTimer, 1000);
-            } catch (err) {
-                console.error('启动计时器失败:', err);
+                timeLeftElement.textContent = `剩余时间: ${hours}小时 ${minutes}分 ${seconds}秒`;
             }
+            
+            updateTimer();
+            setInterval(updateTimer, 1000);
         }
         
         // 获取设备信息
@@ -823,15 +793,6 @@
                 const response = await fetch('https://api.ipify.org?format=json');
                 const data = await response.json();
                 document.getElementById('ip-address').textContent = data.ip || '未知';
-                
-                // 保存IP地址到数据库
-                const userId = localStorage.getItem('currentUserId');
-                if (userId) {
-                    await supabase
-                        .from('merit')
-                        .update({ ip_address: data.ip })
-                        .eq('user_id', userId);
-                }
             } catch (error) {
                 document.getElementById('ip-address').textContent = '获取失败';
             }
@@ -907,64 +868,35 @@
             window.open('https://v.kuaishou.com/n9ZXecyF', '_blank');
         });
         
-        // 敲木鱼功能
-        async function loadMeritCount() {
-            const userId = localStorage.getItem('currentUserId');
-            if (!userId) return;
+        // 敲木鱼功能 - 纯本地存储
+        document.getElementById('wooden-fish').addEventListener('click', function() {
+            let currentCount = parseInt(localStorage.getItem('meritCount') || '0');
+            currentCount++;
+            localStorage.setItem('meritCount', currentCount.toString());
+            document.getElementById('merit-count').textContent = currentCount;
             
-            try {
-                const { data: userMerit, error } = await supabase
-                    .from('merit')
-                    .select('count')
-                    .eq('user_id', userId)
-                    .single();
-
-                if (!error && userMerit) {
-                    document.getElementById('merit-count').textContent = userMerit.count;
-                }
-            } catch (err) {
-                console.error('加载功德值失败:', err);
-            }
-        }
-        
-        document.getElementById('wooden-fish').addEventListener('click', async function() {
-            const userId = localStorage.getItem('currentUserId');
-            if (!userId) return;
+            // 点击效果
+            this.style.transform = 'translateY(5px)';
+            setTimeout(() => {
+                this.style.transform = 'translateY(0)';
+            }, 100);
             
-            try {
-                let currentCount = parseInt(document.getElementById('merit-count').textContent);
-                currentCount++;
-                document.getElementById('merit-count').textContent = currentCount;
-                
-                await supabase
-                    .from('merit')
-                    .update({ count: currentCount })
-                    .eq('user_id', userId);
-                
-                this.style.transform = 'translateY(5px)';
-                setTimeout(() => {
-                    this.style.transform = 'translateY(0)';
-                }, 100);
-                
-                // 播放音效
-                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                const oscillator = audioContext.createOscillator();
-                const gainNode = audioContext.createGain();
-                
-                oscillator.connect(gainNode);
-                gainNode.connect(audioContext.destination);
-                
-                oscillator.frequency.value = 196; // G频率
-                oscillator.type = 'sine';
-                
-                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-                
-                oscillator.start(audioContext.currentTime);
-                oscillator.stop(audioContext.currentTime + 0.5);
-            } catch (err) {
-                console.error('敲木鱼失败:', err);
-            }
+            // 音效
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.value = 196;
+            oscillator.type = 'sine';
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+            
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + 0.5);
         });
         
         // 音乐控制
@@ -1004,4 +936,4 @@
         });
     </script>
 </body>
-  </html>
+    </html>
